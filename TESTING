@@ -1,0 +1,74 @@
+### PACKAGES
+import pandas
+import numpy as np
+import matplotlib.pyplot as plt
+import pyarrow
+import statsmodels
+import statsmodels.api as sm
+from hurst import compute_Hc
+from statsmodels.tsa.stattools import coint,adfuller
+from statsmodels.tsa.vector_ar.vecm import coint_johansen
+from scipy import stats
+
+#### GET DATA
+
+data_insample = pandas.read_csv("FINANCIALS_DATA_IN_SAMPLE.csv").iloc[511:907]
+data_outsample = pandas.read_csv("FINANCIALS_DATA_OUT_SAMPLE.csv")
+securities = data_insample.columns[1:]
+cointegrated_pairs = []
+data_insample = data_insample.dropna().replace([np.inf, -np.inf], np.nan)
+
+### COINTEGRATION TEST
+
+for i in range(len(securities)):
+    for j in range(i +1, len(securities)):
+        pair_data = data_insample[[securities[i], securities[j]]]
+        result = coint_johansen(pair_data,det_order=0,k_ar_diff=i)
+        trace_statistic = result.lr1[0]
+        critical_value = result.cvt[:, 1]
+        critical_value_max_eigenvalue = result.cvm[:, 0]
+        if trace_statistic < critical_value[0]:
+            cointegrated_pairs.append(
+                (securities[i], securities[j]))
+
+### CONDUCT REGRESSIONS FOR ALL PAIRS, CALCULATE SPREAD , IN SAMPLE STATIONARITY TEST, SAVE
+
+in_sample_stationary = []
+in_sample_stationary_beta = []
+def check_for_stationarity(X, cutoff =  0.10):
+    X.name = 'Spread'
+    pvalue = adfuller(X)[1]
+    if pvalue < cutoff:
+            # print(f'p-value = ' + str(pvalue) + ' The series ' + X.name + ' is likely stationary.')
+            return True
+    else:
+            # print(f'p-value = ' + str(pvalue) + ' The series ' + X.name + ' is likely non-stationary.')
+            return False
+
+for J,K in cointegrated_pairs:
+    A = data_insample[J]
+    B = data_insample[K]
+    B = sm.add_constant(B)
+    results = sm.OLS(A, B).fit()
+    b = results.params[K]
+    spread = data_insample[J] - b * data_insample[K]
+    # print((J,K))
+    if check_for_stationarity(spread):
+        in_sample_stationary.append((J, K))
+        in_sample_stationary_beta.append(b)
+
+### OUT OF SAMPLE STATIONARY TEST
+
+out_sample_stationary = []
+i = 0
+for J, K in in_sample_stationary:
+    b = in_sample_stationary_beta[i]
+    A = data_outsample[J]
+    B = data_outsample[K]
+    out_sample_spread = data_outsample[J] - b*data_outsample[K]
+    # print(i)
+    if check_for_stationarity(out_sample_spread):
+        out_sample_stationary.append((J,K))
+    i +=1
+
+print(out_sample_stationary)
